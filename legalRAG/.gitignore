@@ -1,0 +1,13 @@
+.DS_Store
+.env
+.pytest_cache/
+.ruff_cache/
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+data/
+neo4j/data/
+neo4j/logs/
+neo4j/plugins/
+
