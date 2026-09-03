@@ -1,4 +1,4 @@
-from domain.models import Passage
+from domain.schema import Passage
 from persistence.chroma_store import ChromaStore
 
 

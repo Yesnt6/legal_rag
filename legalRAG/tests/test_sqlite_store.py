@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from domain.models import Document, DocumentKind, Passage
+from domain.schema import Document, DocumentKind, Passage
 from persistence.sqlite_store import SQLiteStore
 
 

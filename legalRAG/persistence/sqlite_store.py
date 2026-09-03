@@ -2,7 +2,7 @@ import json
 import sqlite3
 from pathlib import Path
 
-from domain.models import Document, Passage
+from domain.schema import Document, Passage
 
 
 class SQLiteStore:

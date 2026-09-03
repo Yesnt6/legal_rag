@@ -2,7 +2,7 @@ from pathlib import Path
 
 import chromadb
 
-from domain.models import Passage
+from domain.schema import Passage
 
 
 class ChromaStore:
