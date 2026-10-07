@@ -43,8 +43,13 @@ From the `legalRAG` directory, install the project dependencies and run:
 
 ```bash
 python -m pip install -e '.[dev]'
-python -m ingestion.pdf_extractor documents/source.pdf documents/source.txt
+python -m ingestion.pdf_extractor
 ```
+
+Edit `SOURCE_PATH` and `OUTPUT_PATH` in `legalRAG/ingestion/pdf_extractor.py`
+to choose the input and output. Defaults are `legalRAG/documents/source.pdf`
+and `legalRAG/documents/source.txt`, independent of the working directory.
+Extraction uses PyMuPDF.
 
 The output is UTF-8 text with `[PAGE 1]`, `[PAGE 2]`, etc. based on physical
 PDF page order, including blank pages. The output parent directory must exist;
