@@ -36,3 +36,22 @@ The project is currently in early development. Implementation details, setup ins
 ## Disclaimer
 
 This project is intended for research and learning purposes. It does not provide legal advice.
+
+## Extract a PDF before indexing
+
+From the `legalRAG` directory, install the project dependencies and run:
+
+```bash
+python -m pip install -e '.[dev]'
+python -m ingestion.pdf_extractor documents/source.pdf documents/source.txt
+```
+
+The output is UTF-8 text with `[PAGE 1]`, `[PAGE 2]`, etc. based on physical
+PDF page order, including blank pages. The output parent directory must exist;
+existing files are not overwritten. Extraction finishes before output is written.
+
+This step does not run indexing or infer Markdown/legal section headings.
+Encrypted PDFs, documents without text, and image-only pages are rejected.
+OCR is not performed. A text layer alone does not prove native-text origin:
+OCR-derived text, mixed image/text content, tables, and reading order still
+need source review before indexing. Printed footer numbers remain source text.
