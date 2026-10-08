@@ -7,8 +7,8 @@ from pathlib import Path
 import pymupdf
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
-SOURCE_PATH = PROJECT_DIR / "documents/source.pdf"
-OUTPUT_PATH = PROJECT_DIR / "documents/source.txt"
+SOURCE_PATH = PROJECT_DIR / "documents/redevelopment_guidelines_english.pdf"
+OUTPUT_PATH = PROJECT_DIR / "outputs/report_1.txt"
 
 
 def extract_marked_text(source_path: Path) -> str:
