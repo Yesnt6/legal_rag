@@ -69,3 +69,33 @@ Blank pages are not counted as image-only. Flags are console/Python warnings,
 not inserted into source text. OCR is not performed; vector drawings are not
 covered by this raster-image check. A readable footer does not mean the image
 content was extracted. Printed footer numbers remain source text.
+
+## Search the indexed document
+
+With Ollama running and the indexed data available, run from `legalRAG`:
+
+```bash
+python -m retrieval.run_retriever
+```
+
+Edit `QUESTION` and `DATA_DIR` in `retrieval/run_retriever.py`. The default data
+location matches the current indexer: `legalRAG/ingestion/data/`. The runner
+uses Chroma collection `indexer_test` and the same `embeddinggemma` model used
+for indexing. It refuses to silently create an empty corpus if files are missing.
+
+Opening `VersionedStore` creates/backfills an FTS5 index over searchable passage
+text and heading paths. New passages are indexed in the same SQLite transaction.
+No re-embedding is required. Queries use quoted literal terms joined with OR,
+ranked by SQLite BM25. Both keyword and semantic search are restricted to the
+same latest stored version per document before applying candidate limits.
+"Latest" means highest ingestion version number, not legally applicable as of
+a date; effective-date filtering is not implemented yet.
+
+Results merge by passage ID and use reciprocal rank fusion with k=60:
+`sum(1 / (60 + channel_rank))`. Higher scores rank first; these scores are not
+cosine similarities or confidence values. Ties break by passage ID. The runner
+prints source pages and origins (`vector`, `keyword`, or `vector+keyword`).
+The former unversioned SQLiteStore remains separate; HybridRetriever now expects
+VersionedStore. Graph retrieval, model reranking, and answer generation remain
+future steps. For this small local corpus, eligible passage IDs are materialized
+in memory and passed to Chroma as an ID filter.

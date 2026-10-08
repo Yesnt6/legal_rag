@@ -1,57 +1,55 @@
 from pathlib import Path
 
-from domain.schema import Document, DocumentKind, Passage
+import pytest
+from test_versioned_search import passage, save_version
+
+from ingestion.manual_indexer import VersionedStore
 from persistence.chroma_store import ChromaStore
-from persistence.sqlite_store import SQLiteStore
 from retrieval.hybrid_retriever import HybridRetriever
 
 
 class FakeOllamaClient:
     def embed(self, texts: list[str]) -> list[list[float]]:
-        assert texts == ["approval"]
+        assert texts == ["bank guarantee"]
         return [[1.0, 0.0]]
 
 
-def test_retrieve_combines_and_deduplicates_candidates(tmp_path: Path) -> None:
-    sqlite_store = SQLiteStore(tmp_path / "legal_rag.sqlite3")
-    sqlite_store.create_schema()
-    chroma_store = ChromaStore(tmp_path / "chroma")
-    document = Document(
-        id="document-1",
-        title="Society Self-Redevelopment Guide",
-        kind=DocumentKind.CIRCULAR,
-        source_path=Path("documents/guide.pdf"),
-    )
-    passages = [
-        Passage(
-            id="passage-1",
-            document_id=document.id,
-            text="The committee needs approval before appointing a consultant.",
-            page_start=4,
-            page_end=4,
-        ),
-        Passage(
-            id="passage-2",
-            document_id=document.id,
-            text="Member approval is recorded at the special general body meeting.",
-            page_start=5,
-            page_end=5,
-        ),
+def test_retrieve_filters_versions_before_limits_and_fuses_ranks(tmp_path: Path):
+    store = VersionedStore(tmp_path / "sources.sqlite3")
+    chroma = ChromaStore(tmp_path / "chroma")
+    old = passage("old", "bank guarantee")
+    save_version(store, "v1", [old])
+    current = [
+        passage("semantic", "Financial security must be provided."),
+        passage("both", "bank guarantee"),
+        passage("keyword", "The bank opens an account."),
     ]
-    sqlite_store.upsert_document(document)
-    for passage in passages:
-        sqlite_store.upsert_passage(passage)
-    chroma_store.upsert_passages(passages, [[1.0, 0.0], [0.0, 1.0]])
-    retriever = HybridRetriever(
-        sqlite_store=sqlite_store,
-        chroma_store=chroma_store,
-        ollama_client=FakeOllamaClient(),
-        vector_candidate_limit=1,
-        keyword_candidate_limit=10,
+    save_version(store, "v2", current)
+    chroma.upsert_passages(
+        [old, passage("orphan", "bank guarantee"), *current],
+        [[1.0, 0.0], [1.0, 0.0], [0.99, 0.1], [0.8, 0.2], [0.0, 1.0]],
     )
+    retriever = HybridRetriever(store, chroma, FakeOllamaClient(), 2, 2)
 
-    evidence = retriever.retrieve("approval")
+    evidence = retriever.retrieve("bank guarantee")
 
-    assert [item.passage.id for item in evidence] == ["passage-1", "passage-2"]
-    assert evidence[0].retrieval_source == "vector+keyword"
-    assert evidence[1].retrieval_source == "keyword"
+    assert [item.passage.id for item in evidence] == ["both", "semantic", "keyword"]
+    assert [item.retrieval_source for item in evidence] == [
+        "vector+keyword",
+        "vector",
+        "keyword",
+    ]
+    assert [item.score for item in evidence] == pytest.approx(
+        [1 / 62 + 1 / 61, 1 / 61, 1 / 62]
+    )
+    assert retriever.retrieve("  ") == []
+    limited = HybridRetriever(store, chroma, FakeOllamaClient(), 2, 2, result_limit=1)
+    assert [e.passage.id for e in limited.retrieve("bank guarantee")] == ["both"]
+
+
+def test_empty_versioned_store_returns_no_evidence(tmp_path: Path):
+    store = VersionedStore(tmp_path / "sources.sqlite3")
+    chroma = ChromaStore(tmp_path / "chroma")
+    retriever = HybridRetriever(store, chroma, FakeOllamaClient(), 2, 2)
+    # The fake rejects this query if embedding is unnecessarily attempted.
+    assert retriever.retrieve("empty corpus") == []

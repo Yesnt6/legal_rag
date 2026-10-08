@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from pathlib import Path
 
 import chromadb
@@ -23,9 +24,12 @@ class ChromaStore:
         if len(passages) != len(embeddings):
             raise ValueError("Each passage must have exactly one embedding.")
 
+        vectors: list[Sequence[float] | Sequence[int]] = [
+            vector for vector in embeddings
+        ]
         self.collection.upsert(
             ids=[passage.id for passage in passages],
-            embeddings=embeddings,
+            embeddings=vectors,
             metadatas=[
                 {
                     "document_id": passage.document_id,
@@ -37,18 +41,29 @@ class ChromaStore:
         )
 
     def search(
-        self, query_embedding: list[float], limit: int
+        self,
+        query_embedding: list[float],
+        limit: int,
+        *,
+        passage_ids: list[str] | None = None,
     ) -> list[tuple[str, float]]:
         if limit < 1:
             raise ValueError("Search limit must be at least 1.")
 
+        if passage_ids == []:
+            return []
+
         results = self.collection.query(
-            query_embeddings=[query_embedding],
+            query_embeddings=query_embedding,
+            ids=passage_ids,
             n_results=limit,
             include=["distances"],
         )
         ids = results["ids"][0]
-        distances = results["distances"][0]
+        distance_rows = results["distances"]
+        if distance_rows is None:
+            raise ValueError("Chroma returned no distances for a vector search.")
+        distances = distance_rows[0]
 
         return [
             (passage_id, 1.0 - distance)
