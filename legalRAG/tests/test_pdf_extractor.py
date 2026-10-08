@@ -49,7 +49,7 @@ def test_rejects_source_text_that_looks_like_a_page_marker(tmp_path: Path) -> No
         extract_marked_text(path)
 
 
-def test_rejects_image_only_page_in_otherwise_text_pdf(tmp_path: Path) -> None:
+def test_flags_image_only_page_and_preserves_its_marker(tmp_path: Path) -> None:
     path = tmp_path / "mixed.pdf"
     make_pdf(path, ["Native text"])
     mixed = tmp_path / "with_image.pdf"
@@ -60,11 +60,12 @@ def test_rejects_image_only_page_in_otherwise_text_pdf(tmp_path: Path) -> None:
         page.insert_image(pymupdf.Rect(0, 0, 100, 100), pixmap=image)
         document.save(mixed)
 
-    with pytest.raises(ValueError, match="review required.*2"):
-        extract_marked_text(mixed)
+    with pytest.warns(UserWarning, match="1 image-only pages: 2"):
+        text = extract_marked_text(mixed)
+    assert text == "[PAGE 1]\nNative text\n[PAGE 2]\n\n"
 
 
-def test_flags_all_image_pages_even_when_they_contain_text(tmp_path: Path) -> None:
+def test_groups_repeated_images_without_blocking_native_text(tmp_path: Path) -> None:
     path = tmp_path / "source.pdf"
     make_pdf(path, ["Cover", "Clause with image", "Plain text", "Another image"])
     mixed = tmp_path / "mixed.pdf"
@@ -75,5 +76,35 @@ def test_flags_all_image_pages_even_when_they_contain_text(tmp_path: Path) -> No
             document[index].insert_image(pymupdf.Rect(0, 0, 100, 100), pixmap=image)
         document.save(mixed)
 
-    with pytest.raises(ValueError, match="review required.*2, 4"):
-        extract_marked_text(mixed)
+    with pytest.warns(UserWarning) as flags:
+        text = extract_marked_text(mixed)
+    message = str(flags[0].message)
+    assert "0 image-only pages: none" in message
+    assert "1 unique images" in message
+    assert "image 1: pages 2, 4" in message
+    assert text == (
+        "[PAGE 1]\nCover\n[PAGE 2]\nClause with image\n"
+        "[PAGE 3]\nPlain text\n[PAGE 4]\nAnother image\n"
+    )
+
+
+def test_image_only_document_flags_distinct_images_and_excludes_blank_page(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "images.pdf"
+    with pymupdf.open() as document:
+        for color in (0, 255):
+            page = document.new_page()
+            image = pymupdf.Pixmap(pymupdf.csRGB, (0, 0, 1, 1))
+            image.clear_with(color)
+            page.insert_image(pymupdf.Rect(0, 0, 100, 100), pixmap=image)
+            page.insert_image(pymupdf.Rect(100, 0, 200, 100), pixmap=image)
+        document.new_page()
+        document.save(path)
+
+    with pytest.warns(UserWarning) as flags:
+        text = extract_marked_text(path)
+    message = str(flags[0].message)
+    assert "2 image-only pages: 1, 2" in message
+    assert "2 unique images (image 1: pages 1; image 2: pages 2)" in message
+    assert text == "[PAGE 1]\n\n[PAGE 2]\n\n[PAGE 3]\n\n"

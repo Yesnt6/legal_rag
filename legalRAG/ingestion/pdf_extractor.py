@@ -1,6 +1,7 @@
 """Extract native PDF text with physical-page markers for manual indexing."""
 
 import re
+import warnings
 from pathlib import Path
 
 import pymupdf
@@ -14,30 +15,39 @@ def extract_marked_text(source_path: Path) -> str:
     """Keep physical page positions, including blank pages; do not perform OCR."""
     parts: list[str] = []
     has_text = False
+    image_only_pages: list[int] = []
+    image_groups: dict[bytes, set[int]] = {}
     with pymupdf.open(source_path) as reader:
         if not reader.is_pdf:
             raise ValueError("Input must be a PDF.")
         if reader.is_encrypted:
             raise ValueError("Encrypted PDFs are not supported.")
-        image_pages = [
-            number
-            for number, page in enumerate(reader, start=1)
-            if page.get_image_info()
-        ]
-        if image_pages:
-            page_numbers = ", ".join(map(str, image_pages))
-            raise ValueError(
-                f"Manual review required: images found on PDF pages {page_numbers}. "
-                "Review these pages before indexing; no text output was generated."
-            )
         for number, page in enumerate(reader, start=1):
             text = (page.get_text("text") or "").replace("\r\n", "\n")
             text = text.replace("\r", "\n").rstrip("\n")
+            images = page.get_image_info(hashes=True)
+            for image in images:
+                image_groups.setdefault(image["digest"], set()).add(number)
+            if images and not text.strip():
+                image_only_pages.append(number)
             if re.search(r"^\[PAGE [1-9]\d*\][ \t]*$", text, re.MULTILINE):
                 raise ValueError(f"Page {number} contains a reserved page marker.")
             has_text = has_text or bool(text.strip())
             parts.append(f"[PAGE {number}]\n{text}\n")
-    if not has_text:
+    if image_groups:
+        page_numbers = ", ".join(map(str, image_only_pages)) or "none"
+        groups = "; ".join(
+            f"image {index}: pages {', '.join(map(str, sorted(pages)))}"
+            for index, pages in enumerate(image_groups.values(), start=1)
+        )
+        warnings.warn(
+            f"{len(image_only_pages)} image-only pages: {page_numbers}. "
+            f"{len(image_groups)} unique images ({groups}). "
+            "Available text extracted; image content is not transcribed (no OCR).",
+            UserWarning,
+            stacklevel=2,
+        )
+    if not has_text and not image_only_pages:
         raise ValueError("PDF contains no extractable text; OCR is not supported.")
     return "".join(parts)
 

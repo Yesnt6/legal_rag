@@ -56,13 +56,16 @@ PDF page order, including blank pages. The output parent directory must exist;
 existing files are not overwritten. Extraction finishes before output is written.
 
 This step does not run indexing or infer Markdown/legal section headings.
-Encrypted PDFs and documents without text are rejected. Any page containing
-raster images (including logos and pages that also have native text) requires
-manual review. Extraction stops and lists all affected physical PDF page numbers
-before creating output. Previously generated output files are not changed;
-do not index an older text file as if it came from the failed extraction.
-There is no approval/resume workflow yet. Vector drawings are not detected by
-this raster-image check.
-OCR is not performed. A text layer alone does not prove native-text origin:
-OCR-derived text, mixed image/text content, tables, and reading order still
-need source review before indexing. Printed footer numbers remain source text.
+Encrypted PDFs and documents with neither extractable text nor raster images
+are rejected. Images no longer block extraction or require approval. A warning
+reports the count and physical page numbers of image-only pages (raster images
+present, no non-whitespace extracted text). Identical images are grouped by
+PyMuPDF's image digest, with their page locations listed once per group.
+
+Every page keeps its `[PAGE N]` marker. Mixed text/image pages retain their native
+text; image-only pages contain just the marker and a blank line. Even an entirely
+image-only PDF produces marked output, but has no text for the indexer to index.
+Blank pages are not counted as image-only. Flags are console/Python warnings,
+not inserted into source text. OCR is not performed; vector drawings are not
+covered by this raster-image check. A readable footer does not mean the image
+content was extracted. Printed footer numbers remain source text.
