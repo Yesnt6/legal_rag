@@ -60,5 +60,20 @@ def test_rejects_image_only_page_in_otherwise_text_pdf(tmp_path: Path) -> None:
         page.insert_image(pymupdf.Rect(0, 0, 100, 100), pixmap=image)
         document.save(mixed)
 
-    with pytest.raises(ValueError, match="Page 2.*OCR"):
+    with pytest.raises(ValueError, match="review required.*2"):
+        extract_marked_text(mixed)
+
+
+def test_flags_all_image_pages_even_when_they_contain_text(tmp_path: Path) -> None:
+    path = tmp_path / "source.pdf"
+    make_pdf(path, ["Cover", "Clause with image", "Plain text", "Another image"])
+    mixed = tmp_path / "mixed.pdf"
+    with pymupdf.open(path) as document:
+        image = pymupdf.Pixmap(pymupdf.csRGB, (0, 0, 1, 1))
+        image.clear_with(0)
+        for index in (1, 3):
+            document[index].insert_image(pymupdf.Rect(0, 0, 100, 100), pixmap=image)
+        document.save(mixed)
+
+    with pytest.raises(ValueError, match="review required.*2, 4"):
         extract_marked_text(mixed)

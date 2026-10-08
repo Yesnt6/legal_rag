@@ -19,13 +19,20 @@ def extract_marked_text(source_path: Path) -> str:
             raise ValueError("Input must be a PDF.")
         if reader.is_encrypted:
             raise ValueError("Encrypted PDFs are not supported.")
+        image_pages = [
+            number
+            for number, page in enumerate(reader, start=1)
+            if page.get_image_info()
+        ]
+        if image_pages:
+            page_numbers = ", ".join(map(str, image_pages))
+            raise ValueError(
+                f"Manual review required: images found on PDF pages {page_numbers}. "
+                "Review these pages before indexing; no text output was generated."
+            )
         for number, page in enumerate(reader, start=1):
             text = (page.get_text("text") or "").replace("\r\n", "\n")
             text = text.replace("\r", "\n").rstrip("\n")
-            if not text.strip() and page.get_image_info():
-                raise ValueError(
-                    f"Page {number} has images but no text; OCR is required."
-                )
             if re.search(r"^\[PAGE [1-9]\d*\][ \t]*$", text, re.MULTILINE):
                 raise ValueError(f"Page {number} contains a reserved page marker.")
             has_text = has_text or bool(text.strip())

@@ -56,7 +56,13 @@ PDF page order, including blank pages. The output parent directory must exist;
 existing files are not overwritten. Extraction finishes before output is written.
 
 This step does not run indexing or infer Markdown/legal section headings.
-Encrypted PDFs, documents without text, and image-only pages are rejected.
+Encrypted PDFs and documents without text are rejected. Any page containing
+raster images (including logos and pages that also have native text) requires
+manual review. Extraction stops and lists all affected physical PDF page numbers
+before creating output. Previously generated output files are not changed;
+do not index an older text file as if it came from the failed extraction.
+There is no approval/resume workflow yet. Vector drawings are not detected by
+this raster-image check.
 OCR is not performed. A text layer alone does not prove native-text origin:
 OCR-derived text, mixed image/text content, tables, and reading order still
 need source review before indexing. Printed footer numbers remain source text.
