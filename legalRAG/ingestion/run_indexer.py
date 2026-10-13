@@ -48,6 +48,7 @@ def main() -> None:
 
     print(f"Version: {result.version_id}")
     print(f"Reused existing version: {result.reused_version}")
+    print(f"Segmentation profile: {result.segmentation_profile}")
     print(f"Passages in SQLite and Chroma: {len(passages)}")
 
     for passage in passages[:3]:

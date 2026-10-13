@@ -1,6 +1,13 @@
+import math
+from typing import Protocol
+
 from domain.schema import RetrievedEvidence
 from ingestion.manual_indexer import Embedder, VersionedStore
 from persistence.chroma_store import ChromaStore
+
+
+class Reranker(Protocol):
+    def score(self, question: str, passages: list[str]) -> list[float]: ...
 
 
 class HybridRetriever:
@@ -14,9 +21,15 @@ class HybridRetriever:
         vector_candidate_limit: int,
         keyword_candidate_limit: int,
         result_limit: int = 10,
+        reranker: Reranker | None = None,
+        rerank_candidate_limit: int = 30,
     ) -> None:
         if min(vector_candidate_limit, keyword_candidate_limit, result_limit) < 1:
             raise ValueError("Retrieval limits must be at least 1.")
+        if reranker is not None and rerank_candidate_limit < result_limit:
+            raise ValueError("Reranking candidate limit must cover the result limit.")
+        self.reranker = reranker
+        self.rerank_candidate_limit = rerank_candidate_limit
         self.sqlite_store = sqlite_store
         self.chroma_store = chroma_store
         self.ollama_client = ollama_client
@@ -60,7 +73,30 @@ class HybridRetriever:
                         passage=passage, score=contribution, retrieval_source=source
                     )
 
-        return sorted(
+        ranked = sorted(
             evidence_by_id.values(),
             key=lambda item: (-item.score, item.passage.id),
-        )[: self.result_limit]
+        )
+        if self.reranker is not None and ranked:
+            ranked = ranked[: self.rerank_candidate_limit]
+            texts = [
+                "\n".join(
+                    filter(
+                        None, [" > ".join(item.passage.section_path), item.passage.text]
+                    )
+                )
+                for item in ranked
+            ]
+            scores = self.reranker.score(question, texts)
+            if len(scores) != len(ranked) or not all(map(math.isfinite, scores)):
+                raise ValueError("Reranker must return one finite score per candidate.")
+            for item, score in zip(ranked, scores, strict=True):
+                item.rerank_score = score
+            # Stable ties retain the original RRF ordering.
+            ranked = [
+                item
+                for _, item in sorted(
+                    zip(scores, ranked, strict=True), key=lambda pair: -pair[0]
+                )
+            ]
+        return ranked[: self.result_limit]

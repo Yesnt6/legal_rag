@@ -81,6 +81,7 @@ class RetrievedEvidence(BaseModel):
     passage: Passage
     score: float
     retrieval_source: str
+    rerank_score: float | None = None
 
 
 class Answer(BaseModel):
