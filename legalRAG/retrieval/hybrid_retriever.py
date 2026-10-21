@@ -1,7 +1,7 @@
 import math
 from typing import Protocol
 
-from domain.schema import RetrievedEvidence
+from domain.schema import Passage, RetrievedEvidence
 from ingestion.manual_indexer import Embedder, VersionedStore
 from persistence.chroma_store import ChromaStore
 
@@ -38,6 +38,41 @@ class HybridRetriever:
         self.result_limit = result_limit
 
     def retrieve(self, question: str) -> list[RetrievedEvidence]:
+        return self.select_evidence(self.retrieve_candidates(question))
+
+    def select_evidence(
+        self, ranked: list[RetrievedEvidence]
+    ) -> list[RetrievedEvidence]:
+        """Keep the highest-ranked granularity; never repeat its descendants."""
+        selected: list[RetrievedEvidence] = []
+        selected_ids: set[str] = set()
+        selected_ancestors: set[str] = set()
+        cache: dict[str, Passage | None] = {
+            item.passage.id: item.passage for item in ranked
+        }
+        for item in ranked:
+            pid = item.passage.id
+            if pid in selected_ids or pid in selected_ancestors:
+                continue
+            ancestors: set[str] = set()
+            parent_id = item.passage.parent_id
+            while parent_id is not None and parent_id not in ancestors:
+                ancestors.add(parent_id)
+                if parent_id not in cache:
+                    cache[parent_id] = self.sqlite_store.get_passage(parent_id)
+                parent = cache[parent_id]
+                parent_id = parent.parent_id if parent is not None else None
+            if ancestors & selected_ids:
+                continue
+            selected.append(item)
+            selected_ids.add(pid)
+            selected_ancestors.update(ancestors)
+            if len(selected) == self.result_limit:
+                break
+        return selected
+
+    def retrieve_candidates(self, question: str) -> list[RetrievedEvidence]:
+        """Return ranked candidates before overlap removal and the final limit."""
         question = question.strip()
         if not question:
             return []
@@ -99,4 +134,4 @@ class HybridRetriever:
                     zip(scores, ranked, strict=True), key=lambda pair: -pair[0]
                 )
             ]
-        return ranked[: self.result_limit]
+        return ranked

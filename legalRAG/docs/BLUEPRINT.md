@@ -552,7 +552,7 @@ the production architecture.
 Use environment-backed settings with conservative defaults:
 
 ```text
-MAIN_MODEL=qwen3:8b
+MAIN_MODEL=qwen3.5:4b
 EMBEDDING_MODEL=embeddinggemma
 RERANKER_MODEL=BAAI/bge-reranker-v2-m3
 GRAPH_MAX_HOPS=3
@@ -560,7 +560,7 @@ VECTOR_CANDIDATE_LIMIT=20
 KEYWORD_CANDIDATE_LIMIT=20
 GRAPH_CANDIDATE_LIMIT=30
 RERANK_LIMIT=8
-ANSWER_TIMEOUT_SECONDS=45
+ANSWER_TIMEOUT_SECONDS=180
 OLLAMA_BASE_URL=http://localhost:11434
 NEO4J_URI=bolt://localhost:7687
 SQLITE_PATH=./data/legal_rag.sqlite3

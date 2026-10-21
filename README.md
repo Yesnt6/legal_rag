@@ -142,3 +142,92 @@ Model errors propagate instead of silently returning unreranked results.
 For a baseline comparison, construct `HybridRetriever` without a reranker.
 No reindexing is required. The ten-question quality evaluation is pending the
 user's questions; automated tests verify pipeline behavior, not model quality.
+
+## Ten-question retrieval evaluation
+
+From `legalRAG`, run `python -m retrieval.evaluate_retrieval` with Ollama running.
+The runner preserves the user's ten questions (including original spelling),
+resolves manually selected evidence excerpts against the active source passages,
+and compares RRF order against reranked order for the same top-30 candidates.
+Q3 and Q7 concern the initial meeting; Q9 concerns developer selection. Q4 accepts
+either of the document's quorum passages. These are provisional, source-grounded
+gold labels for the supplied 2009 directive, not a current-law assessment.
+
+Results are written to `outputs/retrieval_evaluation.json`, including full candidate
+texts, page references, gold passage IDs, hit@1, hit@5, evidence-group coverage@5,
+complete coverage@5, candidate coverage, and query/reranking timings. Alternative
+passages supporting the same required point count once. Full coverage measures
+the listed evidence groups, not whether a generated answer is correct.
+Model warmup is recorded separately. The per-question timings are single-run
+observations, not a latency benchmark. With eight complaint items, Q1 cannot
+achieve complete coverage using five individual passages.
+
+### Preserving explicit numbered lists
+
+Segmentation profile `legal-clauses-v3` adds non-searchable `LIST` parents for
+explicit prose introductions (enumeration cues such as “following” or “as under”,
+ending in a colon) followed by at least two consecutive numeric items starting
+at 1, with consistent numbering style and indentation. Numbered colon headings
+are excluded. Each item keeps a clause parent beneath the list; its heading path
+includes the source introduction and enclosing section. Exact text offsets and
+physical page spans remain unchanged.
+
+This conservative plain-text pass handles simple `1.` and `1)` lists. It does
+not infer font information, general nested-list structure, or arbitrary unmarked
+lists. A new paragraph within an item prevents further grouping; a blank line
+after the final item ends the group so following prose is not absorbed. Thus
+multi-paragraph items need richer extraction or additional rules. Existing
+alpha/Roman clause parsing remains in place. Unrecognized groups retain the
+existing segmentation behavior. Tests cover list/section numbering collisions,
+ambiguous inputs, cross-page continuation, and the local directive when present.
+
+Run `python -m ingestion.run_indexer` from `legalRAG` to activate the new profile.
+This changes indexing context only: sibling expansion and the top-five retrieval
+limit are unchanged. Keep the existing evaluation outputs as the pre-change
+baseline before rerunning evaluation.
+
+### Searching complete lists and individual clauses
+
+Profile `legal-clauses-v4` makes `LIST` records searchable when their complete
+source span fits `max_chars` (1800 by default). Those records enter both SQLite
+FTS and Chroma alongside individual clauses; the usual hybrid ranking and
+reranker choose the level of detail without a manual expansion mode. Larger
+lists remain non-searchable parents with searchable individual clauses; complete
+retrieval of oversized lists is not implemented yet.
+
+After ranking, `HybridRetriever.select_evidence()` removes ancestor/descendant
+overlap in rank order. A higher-ranked list excludes its children; a higher-ranked
+child excludes its lower-ranked list, preserving focused results. Other siblings
+remain eligible. Results retain their original scores and citations, and later
+candidates fill available result slots. Parent IDs, not text similarity, determine
+overlap. `retrieve_candidates()` exposes the ranking before this selection so
+evaluation can compare RRF and reranking independently on the same candidates.
+
+Reindex to activate v4. Existing evaluation reports are historical baselines and
+are not automatically updated by reindexing. Run evaluation separately to measure
+quality changes; whole-list results can satisfy multiple expected evidence groups.
+
+## Source-bound answer generation
+
+From `legalRAG`, install the configured generation model with `ollama pull qwen3.5:4b`,
+then run `python -m retrieval.run_answer`. Edit `QUESTION` in that runner; the model
+uses `LEGAL_RAG_MAIN_MODEL` from settings (default `qwen3.5:4b`). EmbeddingGemma is
+only an embedding model and cannot generate answers. No reindexing is required.
+
+The runner retrieves five non-overlapping passages, generates atomic claims using
+Ollama JSON-schema output, and verifies each claim in a fresh model call containing
+only that claim and its cited passages. Invalid passage IDs, missing/non-verbatim
+quotes, or any verdict other than SUPPORTED with valid supporting quotes withhold
+the answer. A malformed structured response gets one retry; HTTP/model/timeout
+errors remain errors, not evidence-based abstentions. Citation numbers, document
+IDs and page ranges come from stored records. The runner additionally displays
+source version IDs, clause paths and exact supporting quotes.
+
+This is a source-reading prototype, not the complete legal answer contract.
+It does not establish temporal validity, exhaustively detect cross-document
+conflicts, or prove answer completeness. Generation and verification use the same
+model and can share mistakes. Evidence is bounded to 12000 source characters;
+whole passages exceeding the remaining budget are omitted, never silently cut
+mid-clause. The 180-second setting is a timeout per model request, not a guaranteed
+end-to-end budget; verification adds one request per claim. Automated tests use
+simulated model outputs; live quality evaluation remains a separate step.

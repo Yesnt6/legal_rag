@@ -5,7 +5,7 @@ import json
 import re
 import sqlite3
 from contextlib import closing
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from pathlib import Path
 from typing import Protocol
@@ -123,7 +123,7 @@ def parse_pages(source: str) -> tuple[str, list[SourcePage]]:
     
     return text, pages
 
-SEGMENTATION_VERSION = "legal-clauses-v2"
+SEGMENTATION_VERSION = "legal-clauses-v4"
 LEGAL_MARKER = re.compile(
     r"^[ \t]*(?:(?P<markdown>#{1,6})[ \t]+(?P<title>[^\n]+)|"
     r"(?P<label>\d{1,3}[.)]|\(\d{1,3}\)|"
@@ -175,9 +175,7 @@ def _legal_boundaries(text: str) -> list[_Boundary]:
         end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
         gap = re.search(r"\n[ \t]*\n", text[match.start() : end])
         heading_end = match.start() + gap.start() if gap else end
-        terminator = re.search(
-            r":-?[ \t]*(?=\n|$)", text[match.start() : heading_end]
-        )
+        terminator = re.search(r":-?[ \t]*(?=\n|$)", text[match.start() : heading_end])
         if terminator:
             heading_end = match.start() + terminator.end()
         candidate = text[match.start() : heading_end].strip()
@@ -199,6 +197,92 @@ def _legal_boundaries(text: str) -> list[_Boundary]:
             )
         )
     return boundaries
+
+
+# These cues express enumeration, not any particular legal topic.
+_LIST_CUE = re.compile(
+    r"\b(?:following|as\s+follows|as\s+under|include[sd]?|consists?\s+of)\b",
+    re.IGNORECASE,
+)
+
+
+def _preserve_numbered_lists(text: str, boundaries: list[_Boundary]) -> list[_Boundary]:
+    """Group only explicit introductions followed by simple numeric sequences.
+
+    Plain text cannot reliably classify arbitrary multi-paragraph or nested lists.
+    Ambiguous groups retain the original boundaries. RESUME is a parser event,
+    not a persisted passage: it restores the surrounding section after a list.
+    """
+    result: list[_Boundary] = []
+    index = 0
+    while index < len(boundaries):
+        first = boundaries[index]
+        number = re.fullmatch(r"(\d+)([.)])", first.label)
+        lower = boundaries[index - 1].body_start if index else 0
+        prefix = text[lower : first.start]
+        stripped = prefix.rstrip()
+        gaps = list(re.finditer(r"\n[ \t]*\n", stripped))
+        intro_start = lower + (gaps[-1].end() if gaps else 0)
+        while intro_start < first.start and text[intro_start].isspace():
+            intro_start += 1
+        intro = text[intro_start : first.start].strip()
+        eligible = (
+            number is not None
+            and number.group(1) == "1"
+            and not first.heading
+            and intro.endswith((":", ":-"))
+            and len(intro) <= 1200
+            and _LIST_CUE.search(intro) is not None
+            and not LEGAL_MARKER.search(intro)
+        )
+        if not eligible:
+            result.append(first)
+            index += 1
+            continue
+        assert number is not None
+        end_index = index
+        while end_index < len(boundaries):
+            item = boundaries[end_index]
+            expected = f"{end_index - index + 1}{number.group(2)}"
+            if item.heading or item.label != expected:
+                break
+            # Matching indentation is another structural signal.
+            line = text[item.start :].split("\n", 1)[0]
+            first_line = text[first.start :].split("\n", 1)[0]
+            if len(line) - len(line.lstrip()) != len(first_line) - len(
+                first_line.lstrip()
+            ):
+                break
+            if end_index > index:
+                previous = boundaries[end_index - 1]
+                between = text[previous.start : item.start].strip()
+                if re.search(r"\n[ \t]*\n\s*\S", between):
+                    break
+            end_index += 1
+        if end_index - index < 2:
+            result.append(first)
+            index += 1
+            continue
+        limit = (
+            boundaries[end_index].start if end_index < len(boundaries) else len(text)
+        )
+        last = boundaries[end_index - 1]
+        gap = re.search(r"\n[ \t]*\n", text[last.start : limit])
+        list_end = last.start + gap.start() if gap else limit
+        # Only retain enclosing headings still above the list's numbering level.
+        enclosing = [b for b in result if b.heading and b.level <= first.level]
+        outer_level = enclosing[-1].level if enclosing else 0
+        level = outer_level + 1
+        result.append(
+            _Boundary(
+                intro_start, first.start, level, "LIST", " ".join(intro.split()), True
+            )
+        )
+        result.extend(replace(b, level=level + 1) for b in boundaries[index:end_index])
+        if list_end < len(text):
+            result.append(_Boundary(list_end, list_end, level, "RESUME", "", False))
+        index = end_index
+    return result
 
 
 def segmentation_profile(max_chars: int) -> str:
@@ -286,13 +370,21 @@ def segment(
             cursor = stop
 
     root_id = add("DOCUMENT", 0, len(text), None, [])
-    boundaries = _legal_boundaries(text)
+    boundaries = _preserve_numbered_lists(text, _legal_boundaries(text))
     paragraphs(0, boundaries[0].start if boundaries else len(text), root_id, [])
     stack: list[tuple[int, str, str]] = []
     for index, boundary in enumerate(boundaries):
         while stack and stack[-1][0] >= boundary.level:
             stack.pop()
         parent_id = stack[-1][1] if stack else root_id
+        if boundary.kind == "RESUME":
+            body_end = (
+                boundaries[index + 1].start
+                if index + 1 < len(boundaries)
+                else len(text)
+            )
+            paragraphs(boundary.start, body_end, parent_id, [item[2] for item in stack])
+            continue
         path = [item[2] for item in stack] + [boundary.label]
         node_end = next(
             (
@@ -302,7 +394,10 @@ def segment(
             ),
             len(text),
         )
-        node_id = add(boundary.kind, boundary.start, node_end, parent_id, path)
+        node_id = add(
+            boundary.kind, boundary.start, node_end, parent_id, path,
+            retrievable=boundary.kind == "LIST" and node_end - boundary.start <= max_chars,
+        )
         stack.append((boundary.level, node_id, boundary.label))
         body_end = (
             boundaries[index + 1].start if index + 1 < len(boundaries) else len(text)

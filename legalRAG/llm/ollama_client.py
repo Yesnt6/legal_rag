@@ -32,3 +32,40 @@ class OllamaClient:
             )
 
         return embeddings
+
+    def generate_json(
+        self, model: str, messages: list[dict[str, str]], schema: type[BaseModel]
+    ) -> BaseModel:
+        """Constrain output to a schema; retry malformed output once."""
+        conversation = list(messages)
+        for attempt in range(2):
+            response = httpx.post(
+                f"{self.base_url}/api/chat",
+                json={
+                    "model": model,
+                    "messages": conversation,
+                    "stream": False,
+                    "think": False,
+                    "format": schema.model_json_schema(),
+                    "options": {"temperature": 0, "num_ctx": 8192},
+                },
+                timeout=self.timeout_seconds,
+            )
+            response.raise_for_status()
+            try:
+                content = response.json()["message"]["content"]
+                return schema.model_validate_json(content)
+            except (ValueError, KeyError, TypeError) as exc:
+                if attempt:
+                    raise ValueError(
+                        "Model output failed structured validation twice."
+                    ) from exc
+                conversation = list(messages) + [
+                    {
+                        "role": "user",
+                        "content": "Previous output did not match the "
+                        "required JSON schema. Return only valid "
+                        "schema-conforming JSON.",
+                    }
+                ]
+        raise AssertionError("Unreachable")
