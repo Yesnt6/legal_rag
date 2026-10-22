@@ -16,7 +16,7 @@ class Settings(BaseModel):
     keyword_candidate_limit: int = Field(default=20, ge=1)
     graph_candidate_limit: int = Field(default=30, ge=1)
     rerank_limit: int = Field(default=8, ge=1)
-    answer_timeout_seconds: float = Field(default=180, gt=0)
+    answer_timeout_seconds: float = Field(default=600, gt=0)
 
     ollama_base_url: str = "http://localhost:11434"
 
@@ -39,7 +39,7 @@ def load_settings() -> Settings:
         keyword_candidate_limit=os.getenv("LEGAL_RAG_KEYWORD_CANDIDATE_LIMIT", "20"),
         graph_candidate_limit=os.getenv("LEGAL_RAG_GRAPH_CANDIDATE_LIMIT", "30"),
         rerank_limit=os.getenv("LEGAL_RAG_RERANK_LIMIT", "8"),
-        answer_timeout_seconds=os.getenv("LEGAL_RAG_ANSWER_TIMEOUT_SECONDS", "180"),
+        answer_timeout_seconds=os.getenv("LEGAL_RAG_ANSWER_TIMEOUT_SECONDS", "600"),
         ollama_base_url=os.getenv("LEGAL_RAG_OLLAMA_BASE_URL", "http://localhost:11434"),
         neo4j_uri=os.getenv("LEGAL_RAG_NEO4J_URI", "bolt://localhost:7687"),
         neo4j_user=os.getenv("LEGAL_RAG_NEO4J_USER", "neo4j"),

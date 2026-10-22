@@ -59,6 +59,25 @@ def test_verified_claim_has_application_owned_citation_and_fresh_verifier_contex
     assert "question" not in verification
 
 
+def test_paraphrased_draft_support_is_accepted_when_verifier_quotes_source():
+    value = draft()
+    value.claims[0].support[0].quote = "The guarantee has to equal one fifth."
+    client = Mock()
+    client.generate_json.side_effect = [
+        value,
+        Verdict(
+            schema_version="1",
+            status="SUPPORTED",
+            support=[{"passage_id": "p1", "quote": "20% bank guarantee"}],
+        ),
+    ]
+
+    answer = AnswerGenerator(client, "test").answer("How much?", evidence())
+
+    assert not answer.abstained
+    assert answer.citations[0].quoted_text == "20% bank guarantee"
+
+
 @pytest.mark.parametrize("status", ["NOT_ESTABLISHED", "CONTRADICTED"])
 def test_unverified_answer_is_withheld(status):
     client = Mock()
@@ -70,15 +89,33 @@ def test_unverified_answer_is_withheld(status):
     assert result.abstained and result.citations == []
 
 
-@pytest.mark.parametrize("pid,quote", [("invented", "20%"), ("p1", "50%"), ("p1", " ")])
-def test_unknown_ids_and_nonverbatim_quotes_are_rejected(pid, quote):
+def test_unknown_passage_ids_are_rejected():
     value = draft()
-    value.claims[0].support[0].passage_id = pid
-    value.claims[0].support[0].quote = quote
+    value.claims[0].support[0].passage_id = "invented"
     client = Mock()
     client.generate_json.return_value = value
     assert AnswerGenerator(client, "test").answer("q", evidence()).abstained
     assert client.generate_json.call_count == 1
+
+
+def test_draft_quote_need_not_be_verbatim_but_verifier_quote_must_be():
+    value = draft()
+    value.claims[0].support[0].quote = "A paraphrase of the source."
+    client = Mock()
+    client.generate_json.side_effect = [
+        value,
+        Verdict(
+            schema_version="1",
+            status="SUPPORTED",
+            support=[{"passage_id": "p1", "quote": "a 20% bank guarantee"}],
+        ),
+    ]
+
+    result = AnswerGenerator(client, "test").answer("q", evidence())
+
+    assert not result.abstained
+    assert result.citations[0].quoted_text == "a 20% bank guarantee"
+    assert "A paraphrase of the source." not in result.citations[0].quoted_text
 
 
 def test_empty_or_over_budget_evidence_skips_model():
@@ -97,7 +134,7 @@ def test_model_can_abstain():
     assert AnswerGenerator(client, "test").answer("q", evidence()).abstained
 
 
-def test_supported_verdict_still_requires_exact_quotes():
+def test_supported_verdict_still_requires_exact_source_quotes():
     client = Mock()
     client.generate_json.side_effect = [
         draft(),
