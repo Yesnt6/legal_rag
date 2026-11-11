@@ -81,7 +81,7 @@ flowchart LR
     SQLite --> Verify
     Chroma[("Chroma\nDerived embeddings")] --> VR
     Neo4j[("Neo4j\nDerived graph + provenance")] --> GR
-    Ollama["Ollama\nQwen3 8B + EmbeddingGemma"] --> QA
+    Ollama["Ollama\nQwen3.5 0.8B + EmbeddingGemma"] --> QA
     Ollama --> VR
     Ollama --> Generate
     Ollama --> Verify
@@ -103,10 +103,10 @@ passage text for convenience, but it is never authoritative.
 
 | Task | Initial Model | Runtime |
 |---|---|---|
-| Query interpretation and rewriting | Quantized Qwen3 8B | Ollama |
-| Graph extraction | Quantized Qwen3 8B | Ollama |
-| Answer generation | Quantized Qwen3 8B | Ollama |
-| Claim verification | Quantized Qwen3 8B in a fresh context | Ollama |
+| Query interpretation and rewriting | Qwen3.5 0.8B | Ollama |
+| Graph extraction | Qwen3.5 0.8B | Ollama |
+| Answer generation | Qwen3.5 0.8B | Ollama |
+| Claim verification | Qwen3.5 0.8B in a fresh context | Ollama |
 | Embeddings | `embeddinggemma` | Ollama |
 | Candidate reranking | `BAAI/bge-reranker-v2-m3` | Local Python |
 
@@ -552,7 +552,7 @@ the production architecture.
 Use environment-backed settings with conservative defaults:
 
 ```text
-MAIN_MODEL=qwen3.5:4b
+MAIN_MODEL=qwen3.5:0.8b
 EMBEDDING_MODEL=embeddinggemma
 RERANKER_MODEL=BAAI/bge-reranker-v2-m3
 GRAPH_MAX_HOPS=3

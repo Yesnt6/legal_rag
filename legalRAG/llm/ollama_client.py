@@ -8,19 +8,32 @@ class EmbeddingResponse(BaseModel):
 
 class OllamaClient:
     def __init__(
-        self, base_url: str, embedding_model: str, timeout_seconds: float
+        self,
+        base_url: str,
+        embedding_model: str,
+        timeout_seconds: float,
+        *,
+        embedding_keep_alive: str | None = None,
+        generation_context_tokens: int = 8192,
     ) -> None:
+        if generation_context_tokens < 1:
+            raise ValueError("Generation context must be positive.")
         self.base_url = base_url.rstrip("/")
         self.embedding_model = embedding_model
         self.timeout_seconds = timeout_seconds
+        self.embedding_keep_alive = embedding_keep_alive
+        self.generation_context_tokens = generation_context_tokens
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
 
+        payload = {"model": self.embedding_model, "input": texts}
+        if self.embedding_keep_alive is not None:
+            payload["keep_alive"] = self.embedding_keep_alive
         response = httpx.post(
             f"{self.base_url}/api/embed",
-            json={"model": self.embedding_model, "input": texts},
+            json=payload,
             timeout=self.timeout_seconds,
         )
         response.raise_for_status()
@@ -47,7 +60,10 @@ class OllamaClient:
                     "stream": False,
                     "think": False,
                     "format": schema.model_json_schema(),
-                    "options": {"temperature": 0, "num_ctx": 8192},
+                    "options": {
+                        "temperature": 0,
+                        "num_ctx": self.generation_context_tokens,
+                    },
                 },
                 timeout=self.timeout_seconds,
             )

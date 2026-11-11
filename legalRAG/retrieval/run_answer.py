@@ -1,8 +1,11 @@
 """Generate a cited answer about indexed sources, without asserting current law."""
 
+import gc
+import json
 from contextlib import closing
 
 from config import load_settings
+from domain.schema import Answer
 from ingestion.manual_indexer import VersionedStore
 from llm.answer_generator import AnswerGenerator
 from llm.ollama_client import OllamaClient
@@ -13,8 +16,58 @@ from retrieval.reranker import CrossEncoderReranker
 from retrieval.run_retriever import DATA_DIR
 
 # Choose "single" to run one question, or "all" to run all ten.
-MODE = "all"
-QUESTION_INDEX = 4  # One-based index into CASES.
+MODE = "single"
+QUESTION_INDEX = 3  # One-based index into CASES.
+ANSWER_PASSAGE_LIMIT = 8
+ANSWER_CONTEXT_CHARS = 7000
+SHOW_DEBUG = True
+
+
+def print_answer(result: Answer, store: VersionedStore) -> None:
+    print("\nLLM Response:")
+    print(result.answer)
+    if result.abstained:
+        print(f"Verification: {result.abstention_reason}")
+
+    print("\nSources:")
+    if not result.citations:
+        print("None verified.")
+
+    by_passage = {}
+    for number, citation in enumerate(result.citations, start=1):
+        by_passage.setdefault(citation.passage_id, []).append((number, citation))
+
+    for passage_id, references in by_passage.items():
+        with closing(store.connect()) as connection:
+            row = connection.execute(
+                "SELECT p.version_id, v.metadata_json "
+                "FROM version_passages p "
+                "JOIN source_versions v ON v.id = p.version_id "
+                "WHERE p.id = ?",
+                (passage_id,),
+            ).fetchone()
+        passage = store.get_passage(passage_id)
+        if row is None or passage is None:
+            raise ValueError(f"Cited passage {passage_id} is missing from SQLite.")
+        metadata = json.loads(row["metadata_json"])
+        numbers = ", ".join(f"[{number}]" for number, _ in references)
+        print(f"\nSource {numbers}:")
+        print(f"Document: {metadata['title']} (ID: {passage.document_id})")
+        print(f"Authority: {metadata['issuing_authority']}")
+        print(f"Publication date: {metadata['publication_date']}")
+        print(f"Version: {row['version_id']}")
+        print(f"Pages: {passage.page_start}–{passage.page_end}")
+        print(f"Section: {' > '.join(passage.section_path) or '(no section)'}")
+        print("Source passage (exact indexed text):")
+        print(passage.text)
+        print("Cited excerpts:")
+        for number, citation in references:
+            print(f"[{number}] {citation.quoted_text}")
+
+    print(
+        "\nScope: Indexed source documents only; "
+        "current legal validity is not verified."
+    )
 
 
 def main():
@@ -27,15 +80,8 @@ def main():
         settings.ollama_base_url,
         settings.embedding_model,
         settings.answer_timeout_seconds,
-    )
-    retriever = HybridRetriever(
-        store,
-        ChromaStore(DATA_DIR / "indexer_test_chroma", collection_name="indexer_test"),
-        client,
-        20,
-        20,
-        result_limit=20,
-        reranker=CrossEncoderReranker(settings.reranker_model),
+        embedding_keep_alive="0",
+        generation_context_tokens=4096,
     )
     if MODE not in {"single", "all"}:
         raise ValueError("MODE must be 'single' or 'all'.")
@@ -46,57 +92,52 @@ def main():
     answer_generator = AnswerGenerator(
         client,
         settings.main_model,
-        progress=lambda message: print(message, flush=True),
+        max_context_chars=ANSWER_CONTEXT_CHARS,
+        progress=(lambda message: print(message, flush=True)) if SHOW_DEBUG else None,
     )
-    print(f"Mode: {MODE}; model: {settings.main_model}", flush=True)
+    if SHOW_DEBUG:
+        print(f"Mode: {MODE}; model: {settings.main_model}", flush=True)
     for question, _ in questions:
+        retriever = HybridRetriever(
+            store,
+            ChromaStore(
+                DATA_DIR / "indexer_test_chroma", collection_name="indexer_test"
+            ),
+            client,
+            20,
+            20,
+            result_limit=20,
+            reranker=CrossEncoderReranker(settings.reranker_model),
+        )
         print(f"\n{'=' * 80}\nQuestion: {question}", flush=True)
+        print(f"Model: {settings.main_model}", flush=True)
         print("Retrieving evidence...", flush=True)
         evidence = retriever.retrieve(question)
-        print(f"Retrieved {len(evidence)} passages.", flush=True)
-        for rank, item in enumerate(evidence, 1):
-            passage = item.passage
-            section = " > ".join(passage.section_path) or "(no section)"
-            if len(section) > 90:
-                section = f"{section[:87]}..."
-            rerank = (
-                f"{item.rerank_score:.3f}"
-                if item.rerank_score is not None
-                else "n/a"
-            )
-            print(
-                f"  {rank:02d} id={passage.id[:12]} "
-                f"pages={passage.page_start}-{passage.page_end} "
-                f"source={item.retrieval_source} "
-                f"rrf={item.score:.4f} rerank={rerank} "
-                f"section={section}",
-                flush=True,
-            )
-        result = answer_generator.answer(question, evidence)
-        print(result.answer)
-        if result.abstained:
-            print(f"Reason: {result.abstention_reason}")
-        for number, citation in enumerate(result.citations, 1):
-            with closing(store.connect()) as connection:
-                row = connection.execute(
-                    "SELECT p.version_id FROM version_passages p "
-                    "WHERE p.id=?",
-                    (citation.passage_id,),
-                ).fetchone()
-            passage = store.get_passage(citation.passage_id)
-            print(
-                f"[{number}] Document: {citation.document_id}; "
-                f"version: {row['version_id']}; "
-                f"pages {citation.page_start}-{citation.page_end}"
-            )
-            print(f"Section: {' > '.join(passage.section_path)}")
-            print(f"Exact source quote: {citation.quoted_text}")
-        print(
-            "Scope: supplied source documents only. Current "
-            "legal validity is not established. "
-            "Automated verification can be wrong; "
-            "completeness and source conflicts need evaluation."
-        )
+        del retriever
+        gc.collect()
+        if SHOW_DEBUG:
+            print(f"Retrieved {len(evidence)} passages.", flush=True)
+            for rank, item in enumerate(evidence, 1):
+                passage = item.passage
+                section = " > ".join(passage.section_path) or "(no section)"
+                if len(section) > 90:
+                    section = f"{section[:87]}..."
+                rerank = (
+                    f"{item.rerank_score:.3f}"
+                    if item.rerank_score is not None
+                    else "n/a"
+                )
+                print(
+                    f"  {rank:02d} id={passage.id[:12]} "
+                    f"pages={passage.page_start}-{passage.page_end} "
+                    f"source={item.retrieval_source} "
+                    f"rrf={item.score:.4f} rerank={rerank} "
+                    f"section={section}",
+                    flush=True,
+                )
+        print("Generating answer...", flush=True)
+        result = answer_generator.answer(question, evidence[:ANSWER_PASSAGE_LIMIT])
+        print_answer(result, store)
 
 
 if __name__ == "__main__":

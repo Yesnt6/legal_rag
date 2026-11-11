@@ -38,7 +38,7 @@ CASES = [
         ],
     ),
     (
-        "What are the list of things the society must do before convening the meeting",
+        "What are the list of things the society should do before convening the meeting",
         [
             ["On receipt of an application as per Directive No. 1"],
             ["Before convening the said meeting"],
